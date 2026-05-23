@@ -35,7 +35,8 @@ const GameplayScreen: React.FC<NavigationProps> = ({ onNavigate, activeWorld, on
       loadSaveLists, handleDeleteSave, handleLoadSave, handleUpdateContextConfig,
       tokenHistory, totalTokens, lastTurnTotalTime, currentProcessingTime,
       lsrTables, lsrRuntimeData, activeLsrTableId, setActiveLsrTableId, lsrViewMode, setLsrViewMode,
-      tavoSelectState, setTavoSelectState, tawaPresetConfig, gameInputRef
+      tavoSelectState, setTavoSelectState, tawaPresetConfig, gameInputRef,
+      isTavernHelperReady
   } = core;
 
   const renderSidebarContent = () => {
@@ -107,6 +108,7 @@ const GameplayScreen: React.FC<NavigationProps> = ({ onNavigate, activeWorld, on
                 handleEntityClick={handleEntityClick}
                 handleSwipe={handleSwipe}
                 totalCount={history.length}
+                isTavernHelperReady={isTavernHelperReady}
             />
 
             {/* Input Area ... (Same as before) */}

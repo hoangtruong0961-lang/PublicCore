@@ -36,6 +36,108 @@ const MemoizedTawaWidget = React.memo(({ children }: any) => {
           window.parent.postMessage({ type: 'TAWA_WIDGET_ACTION', action: action, payload: payload }, '*');
         }
       };
+
+      // SillyTavern global mock proxies
+      window.getCharWorldbookNames = function() {
+          var names = [];
+          if (window.parent && window.parent.TavernHelper) {
+              try {
+                  names = window.parent.TavernHelper.getWorldbookNames() || [];
+              } catch(e) {
+                  console.error("[TawaBridge] Error getCharWorldbookNames:", e);
+              }
+          }
+          if (names.indexOf('Kenshi') === -1) {
+              names.push('Kenshi');
+          }
+          return names;
+      };
+
+      window.getWorldbooks = function() {
+          var result = {};
+          if (window.parent && window.parent.TavernHelper) {
+              try {
+                  var names = window.parent.TavernHelper.getWorldbookNames() || [];
+                  var rawBooks = window.parent.TavernHelper.getWorldbooks ? window.parent.TavernHelper.getWorldbooks() : [];
+                  
+                  for (var i = 0; i < names.length; i++) {
+                      var name = names[i];
+                      var rawBook = rawBooks.find ? rawBooks.find(function(b) { return b.name === name; }) : null;
+                      var entriesObj = {};
+                      if (rawBook && rawBook.entries) {
+                          if (Array.isArray(rawBook.entries)) {
+                              rawBook.entries.forEach(function(entry) {
+                                  var uid = entry.uid || Math.random().toString(36).substring(2, 9);
+                                  entriesObj[uid] = entry;
+                              });
+                          } else {
+                              entriesObj = rawBook.entries;
+                          }
+                      }
+                      result[name] = {
+                          name: name,
+                          entries: entriesObj
+                      };
+                  }
+              } catch(e) {
+                  console.error("[TawaBridge] Error getWorldbooks:", e);
+              }
+          }
+          if (!result['Kenshi']) {
+              result['Kenshi'] = {
+                  name: 'Kenshi',
+                  entries: {}
+              };
+          }
+          return result;
+      };
+
+      window.getWorldbook = function(name) {
+          var books = window.getWorldbooks();
+          return books[name] || { name: name, entries: {} };
+      };
+
+      window.getVariables = function() {
+          if (window.parent && window.parent.TavernHelper) {
+              try {
+                  return window.parent.TavernHelper.getVariables() || {};
+              } catch(e) {
+                  return {};
+              }
+          }
+          return {};
+      };
+
+      window.setVariables = function(vars) {
+          if (window.parent && window.parent.TavernHelper) {
+              try {
+                  return window.parent.TavernHelper.updateVariablesWith(vars);
+              } catch(e) {
+                  return false;
+              }
+          }
+          return false;
+      };
+
+      window.setVariable = function(key, val) {
+          var obj = {};
+          obj[key] = val;
+          return window.setVariables(obj);
+      };
+
+      window.getCharacterName = function() {
+          var vars = window.getVariables();
+          return vars.char_name || 'Character';
+      };
+
+      window.getCharName = function() {
+          return window.getCharacterName();
+      };
+
+      window.getUserName = function() {
+          var vars = window.getVariables();
+          return vars.user_name || 'User';
+      };
     </script>`;
     
     if (decoded.includes('<head>')) {
@@ -822,6 +924,108 @@ const IframeSandboxWidget = ({ contentAttr }: { contentAttr: string }) => {
           postMessage: function(action, payload) {
             this.sendAction(action, payload);
           }
+        };
+
+        // SillyTavern global mock proxies
+        window.getCharWorldbookNames = function() {
+            var names = [];
+            if (window.parent && window.parent.TavernHelper) {
+                try {
+                    names = window.parent.TavernHelper.getWorldbookNames() || [];
+                } catch(e) {
+                    console.error("[TawaBridge] Error getCharWorldbookNames:", e);
+                }
+            }
+            if (names.indexOf('Kenshi') === -1) {
+                names.push('Kenshi');
+            }
+            return names;
+        };
+
+        window.getWorldbooks = function() {
+            var result = {};
+            if (window.parent && window.parent.TavernHelper) {
+                try {
+                    var names = window.parent.TavernHelper.getWorldbookNames() || [];
+                    var rawBooks = window.parent.TavernHelper.getWorldbooks ? window.parent.TavernHelper.getWorldbooks() : [];
+                    
+                    for (var i = 0; i < names.length; i++) {
+                        var name = names[i];
+                        var rawBook = rawBooks.find ? rawBooks.find(function(b) { return b.name === name; }) : null;
+                        var entriesObj = {};
+                        if (rawBook && rawBook.entries) {
+                            if (Array.isArray(rawBook.entries)) {
+                                rawBook.entries.forEach(function(entry) {
+                                    var uid = entry.uid || Math.random().toString(36).substring(2, 9);
+                                    entriesObj[uid] = entry;
+                                });
+                            } else {
+                                entriesObj = rawBook.entries;
+                            }
+                        }
+                        result[name] = {
+                            name: name,
+                            entries: entriesObj
+                        };
+                    }
+                } catch(e) {
+                    console.error("[TawaBridge] Error getWorldbooks:", e);
+                }
+            }
+            if (!result['Kenshi']) {
+                result['Kenshi'] = {
+                    name: 'Kenshi',
+                    entries: {}
+                };
+            }
+            return result;
+        };
+
+        window.getWorldbook = function(name) {
+            var books = window.getWorldbooks();
+            return books[name] || { name: name, entries: {} };
+        };
+
+        window.getVariables = function() {
+            if (window.parent && window.parent.TavernHelper) {
+                try {
+                    return window.parent.TavernHelper.getVariables() || {};
+                } catch(e) {
+                    return {};
+                }
+            }
+            return {};
+        };
+
+        window.setVariables = function(vars) {
+            if (window.parent && window.parent.TavernHelper) {
+                try {
+                    return window.parent.TavernHelper.updateVariablesWith(vars);
+                } catch(e) {
+                    return false;
+                }
+            }
+            return false;
+        };
+
+        window.setVariable = function(key, val) {
+            var obj = {};
+            obj[key] = val;
+            return window.setVariables(obj);
+        };
+
+        window.getCharacterName = function() {
+            var vars = window.getVariables();
+            return vars.char_name || 'Character';
+        };
+
+        window.getCharName = function() {
+            return window.getCharacterName();
+        };
+
+        window.getUserName = function() {
+            var vars = window.getVariables();
+            return vars.user_name || 'User';
         };
 
         // Tawa Logging Override

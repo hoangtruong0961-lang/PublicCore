@@ -131,6 +131,8 @@ export const useGameplayCore = ({
     id?: string;
   } | null>(null);
 
+  const [isTavernHelperReady, setIsTavernHelperReady] = useState(false);
+
   const [showTokenDetails, setShowTokenDetails] = useState(true);
   const [showStatsDetails, setShowStatsDetails] = useState(true);
   const [isInputCollapsed, setIsInputCollapsed] = useState(false);
@@ -290,11 +292,17 @@ export const useGameplayCore = ({
       debounceTimer = setTimeout(async () => {
         try {
           const settingsObj = await dbService.getSettings();
+          const existingExtSettings = settingsObj.extensionSettings || {};
+          const worldId = activeWorldRef.current?.id || 'default';
+          
           await dbService.saveSettings({
             ...settingsObj,
-            extensionSettings: { ...rawSettings }
+            extensionSettings: {
+              ...existingExtSettings,
+              [worldId]: { ...rawSettings }
+            }
           } as any);
-          console.log('[TavernHelper Bridge] Saved extension settings to DB:', rawSettings);
+          console.log(`[TavernHelper Bridge] Saved extension settings for world ${worldId} to DB:`, rawSettings);
         } catch(e) {
           console.error('[TavernHelper Bridge] Error saving extension settings:', e);
         }
@@ -344,6 +352,7 @@ export const useGameplayCore = ({
 
     // Prefetch all data for TavernHelper synchronously caching
     const initTavernHelper = async () => {
+      setIsTavernHelperReady(false);
       try {
         const { tavoApi } = await import('../../../../services/api/tavoApi');
         const dbPresets = await tavoApi.preset.all();
@@ -386,9 +395,17 @@ export const useGameplayCore = ({
           
           // Prefetch extension settings
           const extSettings = settingsObj?.extensionSettings || {};
-          for (const key in extSettings) {
-            rawSettings[key] = extSettings[key];
+          const worldId = activeWorld?.id || 'default';
+          const worldExtSettings = extSettings[worldId] || {};
+          
+          // Clear active memory settings to prevent cross-leakage
+          for (const key in rawSettings) {
+             delete rawSettings[key];
           }
+          for (const key in worldExtSettings) {
+            rawSettings[key] = worldExtSettings[key];
+          }
+          console.log(`[TavernHelper Bridge] Successfully hydrated extension settings for world ${worldId}:`, rawSettings);
         } catch(e) {}
 
         tavernHelperCache.variables = { ...globalVars, ...variablesObj };
@@ -398,6 +415,8 @@ export const useGameplayCore = ({
         eventSource.emit('chat_changed', activeWorld?.id);
       } catch (err) {
         console.error('[TavernHelper Bridge] Initialization error:', err);
+      } finally {
+        setIsTavernHelperReady(true);
       }
     };
 
@@ -513,6 +532,12 @@ export const useGameplayCore = ({
       getWorldbookNames: () => {
         return tavernHelperCache.worldbooks.map((wb: any) => wb.name || 'Unnamed Lorebook');
       },
+      getWorldbooks: () => {
+        return tavernHelperCache.worldbooks || [];
+      },
+      getWorldbook: (name: string) => {
+        return tavernHelperCache.worldbooks.find((wb: any) => wb.name === name);
+      },
       getGlobalWorldbookNames: () => {
         return tavernHelperCache.globalWorldbooks;
       },
@@ -626,27 +651,46 @@ export const useGameplayCore = ({
     const setMessage = (message_id: number, fields: any) => {
       console.log('[SillyTavern Bridge] setMessage called:', message_id, fields);
       if (typeof message_id !== 'number') return;
-      setHistory((prev: any) => prev.map((m: any, i: number) => {
-        if (i === message_id) {
-          return { ...m, ...fields };
-        }
-        return m;
-      }));
+      setHistory((prev: any) => {
+        const next = prev.map((m: any, i: number) => {
+          if (i === message_id) {
+            const mappedText = typeof fields.message === 'string' ? fields.message : (fields.text || m.text || m.content);
+            return { 
+              ...m, 
+              text: mappedText,
+              content: mappedText,
+              ...fields 
+            };
+          }
+          return m;
+        });
+        syncWorldState(next, turnCountRef.current, gameTimeRef.current);
+        return next;
+      });
     };
     const createMessage = (role: 'user' | 'assistant' | 'system', content: string) => {
       console.log('[SillyTavern Bridge] createMessage called:', role, content);
       const newMsg = {
         role,
-        content,
+        text: content,
+        content: content,
         timestamp: Date.now()
       };
-      setHistory((prev: any) => [...prev, newMsg]);
+      setHistory((prev: any) => {
+        const next = [...prev, newMsg];
+        syncWorldState(next, turnCountRef.current, gameTimeRef.current);
+        return next;
+      });
       return newMsg;
     };
     const deleteMessage = (message_id: number) => {
       console.log('[SillyTavern Bridge] deleteMessage called:', message_id);
       if (typeof message_id !== 'number') return;
-      setHistory((prev: any) => prev.filter((_: any, i: number) => i !== message_id));
+      setHistory((prev: any) => {
+        const next = prev.filter((_: any, i: number) => i !== message_id);
+        syncWorldState(next, turnCountRef.current, gameTimeRef.current);
+        return next;
+      });
     };
 
     // Prompt injection registers (Phase 4)
@@ -758,9 +802,123 @@ export const useGameplayCore = ({
         }
       }
 
-      // 2. Fallbacks to internal commands
-      if (trimCmd.startsWith('/setvar')) {
-        const params = trimCmd.substring(7).trim();
+      // Helper to extract argument value from named args (e.g. value="test" or key='something')
+      const getCommandArgValue = (argsText: string, keyName: string = "value"): string => {
+        const trimmed = argsText.trim();
+        if (!trimmed) return "";
+        
+        const prefix = `${keyName}=`;
+        if (trimmed.startsWith(prefix)) {
+          let val = trimmed.substring(prefix.length).trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.substring(1, val.length - 1);
+          }
+          return val;
+        }
+        
+        if (trimmed.includes('=')) {
+          const regex = /(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g;
+          let match;
+          const params: Record<string, string> = {};
+          while ((match = regex.exec(trimmed)) !== null) {
+            const key = match[1].toLowerCase();
+            const value = match[2] || match[3] || match[4] || "";
+            params[key] = value;
+          }
+          if (params[keyName]) {
+            return params[keyName];
+          }
+        }
+
+        let val = trimmed;
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.substring(1, val.length - 1);
+        }
+        return val;
+      };
+
+      const getCommandArg = (key: string) => {
+        return getCommandArgValue(slashArgs, key);
+      };
+
+      // 2. Fallbacks to virtualized internal commands
+      if (slashName === 'setinput') {
+        const val = getCommandArg('value') || slashArgs;
+        tavoRegistry.setInputValue?.(val);
+        setIsInputCollapsed(false);
+        setTimeout(() => {
+          tavoRegistry.focusInput?.();
+        }, 50);
+        return;
+      }
+      
+      if (slashName === 'send') {
+        const val = getCommandArg('value') || slashArgs;
+        if (val) {
+          tavoRegistry.setInputValue?.(val);
+          setIsInputCollapsed(false);
+          setTimeout(() => {
+            tavoRegistry.sendInput?.();
+          }, 50);
+        } else {
+          tavoRegistry.sendInput?.();
+        }
+        return;
+      }
+
+      if (slashName === 'sys' || slashName === 'system') {
+        const val = getCommandArg('value') || slashArgs;
+        if (val) {
+          const sysMsg: ChatMessage = {
+            role: "system",
+            text: val,
+            timestamp: Date.now(),
+            gameTime: gameTimeRef.current || gameTime,
+            turnNumber: turnCountRef.current || turnCount,
+          };
+          setHistory((prev: any) => {
+            const next = [...prev, sysMsg];
+            syncWorldState(next, turnCountRef.current, gameTimeRef.current);
+            return next;
+          });
+        }
+        return;
+      }
+
+      if (slashName === 'pop') {
+        setHistory((prev: any) => {
+          if (prev.length === 0) return prev;
+          const next = prev.slice(0, -1);
+          syncWorldState(next, turnCountRef.current, gameTimeRef.current);
+          return next;
+        });
+        return;
+      }
+
+      if (slashName === 'delete') {
+        const num = parseInt(getCommandArg('value') || slashArgs, 10);
+        if (!isNaN(num)) {
+          setHistory((prev: any) => {
+            const next = prev.filter((_: any, i: number) => i !== num);
+            syncWorldState(next, turnCountRef.current, gameTimeRef.current);
+            return next;
+          });
+        }
+        return;
+      }
+
+      if (slashName === 'getvar') {
+        const key = getCommandArg('key') || slashArgs;
+        if (key) {
+          const val = tavernHelperCache.variables[key] || '';
+          console.log(`[Slash Command /getvar] ${key} = ${val}`);
+          return val;
+        }
+        return;
+      }
+
+      if (slashName === 'setvar') {
+        const params = slashArgs.trim();
         let key = '';
         let val = '';
         
@@ -782,32 +940,39 @@ export const useGameplayCore = ({
           if (key.startsWith('key=')) {
             key = key.substring(4).trim();
           }
-          console.log(`[SillyTavern Bridge] Executing setting variable: ${key} = ${val}`);
+          if (val.startsWith('value=')) {
+            val = val.substring(6).trim();
+          }
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.substring(1, val.length - 1);
+          }
+          
+          console.log(`[Slash Command /setvar] Setting variable: ${key} = ${val}`);
           try {
             const { tavoApi } = await import('../../../../services/api/tavoApi');
             await tavoApi.set(key, val);
             tavernHelperCache.variables[key] = val;
-            
             window.dispatchEvent(new CustomEvent('tavo_vars_updated', { detail: { key, val } }));
           } catch(e) {}
         }
-      } else if (trimCmd.startsWith('/setinput ')) {
-        const text = trimCmd.substring(10).trim();
-        tavoRegistry.setInputValue?.(text);
-        setIsInputCollapsed(false);
-        setTimeout(() => {
-          tavoRegistry.focusInput?.();
-        }, 50);
-      } else if (trimCmd.startsWith('/send')) {
-        const text = trimCmd.substring(5).trim();
-        if (text) {
-          tavoRegistry.setInputValue?.(text);
-          setIsInputCollapsed(false);
-          setTimeout(() => {
-            tavoRegistry.sendInput?.();
-          }, 50);
+        return;
+      }
+
+      if (slashName === 'echo' || slashName === 'display') {
+        const val = getCommandArg('value') || slashArgs;
+        if (val) {
+          console.log(`[Slash Command /echo] Display alert: ${val}`);
         }
-      } else if (!trimCmd.startsWith('/')) {
+        return;
+      }
+
+      if (slashName === 'clear' || slashName === 'wipe') {
+        setHistory([]);
+        syncWorldState([], 0, gameTimeRef.current);
+        return;
+      }
+
+      if (!trimCmd.startsWith('/')) {
         tavoRegistry.setInputValue?.(trimCmd);
         setIsInputCollapsed(false);
         setTimeout(() => {
@@ -3585,5 +3750,6 @@ export const useGameplayCore = ({
     tavoSelectState,
     setTavoSelectState,
     gameInputRef,
+    isTavernHelperReady,
   };
 };

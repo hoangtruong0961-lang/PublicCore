@@ -812,6 +812,7 @@ interface GameplayChatAreaProps {
   handleEntityClick: (name: string) => void;
   handleSwipe: (index: number, direction: "prev" | "next") => void;
   totalCount: number;
+  isTavernHelperReady?: boolean;
 }
 
 export const GameplayChatArea: React.FC<GameplayChatAreaProps> = ({
@@ -831,7 +832,19 @@ export const GameplayChatArea: React.FC<GameplayChatAreaProps> = ({
   handleEntityClick,
   handleSwipe,
   totalCount,
+  isTavernHelperReady = true,
 }) => {
+  if (!isTavernHelperReady) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-3 bg-stone-300 dark:bg-mystic-900">
+        <Loader2 className="w-8 h-8 text-mystic-accent animate-spin" />
+        <span className="text-sm font-medium text-stone-500 dark:text-slate-400">
+          Đang tải dữ liệu TavernHelper...
+        </span>
+      </div>
+    );
+  }
+
   return (
     <>
       <div
