@@ -78,7 +78,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     soundVolume: 50,
     musicVolume: 50,
     theme: 'dark',
-    fontSize: 10,
+    fontSize: 16,
     systemFont: 'Inter',
     realityDifficulty: 'Normal',
     contentBeautify: false,
@@ -193,7 +193,7 @@ class DatabaseService {
     const mergedSettings = { ...DEFAULT_SETTINGS, ...settings };
 
     const isMobileDevice = typeof window !== 'undefined' && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-    const targetFontSize = isMobileDevice ? 10 : 16;
+    const targetFontSize = 16;
 
     // MIGRATION: Auto-disable beautify content and set fontSize based on device
     if (mergedSettings.contentBeautify === true || mergedSettings.fontSize !== targetFontSize) {
